@@ -1,0 +1,97 @@
+/**
+* @description       : Generic Email Utility Class which can send emails from the trigger with email templates and merge fields
+* @author            : Vilas Aedigiwar
+**/
+public with sharing class EmailNotificationUtility {
+    
+    // wrapper class to store email related data
+    public class EmailNotificationWrapper {
+        public String emailTemplateName;
+        public boolean isSendingToTargetObj;
+        public boolean isSendingToPublicGroup;
+        public String targetObjId;
+        public boolean saveAsActivity;
+        public List<String> userIdList;
+        public Map<String,String> replaceMergeFieldsMap;
+        public EmailNotificationWrapper(){
+            isSendingToTargetObj = false;
+            isSendingToPublicGroup = false;
+            saveAsActivity = false;
+        }
+    }
+    
+    /**
+    * @description       : This method will receive a map of wrapper as a parameter and will send an   email to targetObjects/Users mentioned in the parameter 
+    * @author            : Vilas Aedigiwar
+    **/
+    public static void sendCustomNotificationEmail(Map<Id,EmailNotificationWrapper> emailWrapperMap){
+        try{
+            List<Messaging.SingleEmailMessage> emailMessageList = new List<Messaging.SingleEmailMessage>();
+            Map<String,EmailTemplate> nameToTemplateMap = new Map<String,EmailTemplate>();
+            Set<String> templateNameSet = new Set<String>();
+            for(Id emailRecord : emailWrapperMap.keySet()){
+                templateNameSet.add(emailWrapperMap.get(emailRecord).emailTemplateName);
+            }
+            List<EmailTemplate> templateList = [Select Id,Name,DeveloperName,Subject,Description,HtmlValue,Body FROM EmailTemplate WHERE DeveloperName IN :templateNameSet];
+            for(EmailTemplate template : templateList){
+                nameToTemplateMap.put(template.DeveloperName, template);
+            }
+            for(Id emailRecord : emailWrapperMap.keySet()){ 
+                EmailTemplate emailTemplate = nameToTemplateMap.get(emailWrapperMap.get(emailRecord).emailTemplateName);
+                Messaging.SingleEmailMessage message = Messaging.renderStoredEmailTemplate(emailTemplate.Id , null,null );
+                String emailSubject = message.getSubject();
+                String emailHtmlBody = message.getHtmlBody();
+                String emailTextBody = message.getPlainTextBody();
+                Map<String,String> mergeFieldsMap = emailWrapperMap.get(emailRecord).replaceMergeFieldsMap;
+                if( mergeFieldsMap != NULL){
+                    for(String mergeValue : mergeFieldsMap.keySet()){
+                        if(emailSubject.contains(mergeValue)){
+                            emailSubject = emailSubject.replace(mergeValue, mergeFieldsMap.get(mergeValue));
+                        }
+                        if(emailHtmlBody.contains(mergeValue)){
+                            emailHtmlBody = emailHtmlBody.replace(mergeValue, mergeFieldsMap.get(mergeValue));
+                            emailTextBody = emailTextBody.replace(mergeValue, mergeFieldsMap.get(mergeValue));
+                        }
+                    }
+                }
+                message.setSubject(emailSubject);
+                message.setPlainTextBody(emailTextBody);
+                message.setHtmlBody(emailHtmlBody);
+                message.setSenderDisplayName('Medical Cannabis Notifications');
+                message.setUseSignature(false);
+                message.setBccSender(false);
+                if(emailWrapperMap.get(emailRecord).isSendingToTargetObj && emailWrapperMap.get(emailRecord).targetObjId != '' ){
+                    message.setTargetObjectId(emailWrapperMap.get(emailRecord).targetObjId);
+                }
+                if(emailWrapperMap.get(emailRecord).isSendingToPublicGroup && emailWrapperMap.get(emailRecord).userIdList != NULL){
+                    message.setToAddresses(emailWrapperMap.get(emailRecord).userIdList);
+                }
+                message.setSaveAsActivity(emailWrapperMap.get(emailRecord).saveAsActivity);
+                emailMessageList.add(message);
+            }
+            
+            if(!test.isRunningTest() && !emailMessageList.isEmpty()){ 
+                Messaging.sendEmail(emailMessageList);
+            }
+       }catch(Exception ex){
+          System.debug(ex.getMessage());
+        }
+    }
+    
+    /**
+    * @description       : This method will receive a public group name as a parameter and return List of Users present in that public group 
+    * @author            : Vilas Aedigiwar
+    **/
+    public static List<String> fetchPublicGroupUsers(String publicGroupName){
+        List<String> userIdList = new List<String>();
+        String groupId = [SELECT Id,Name FROM Group WHERE Type ='Regular' AND Name=:publicGroupName LIMIT 1].Id;
+        String userOrGroupId;
+        for(GroupMember grpMem :  [SELECT UserOrGroupId FROM GroupMember WHERE GroupId = :groupId]){
+            userOrGroupId = grpMem.UserOrGroupId;
+            if(userOrGroupId.contains('005')){
+                userIdList.add(userOrGroupId);
+            }
+        }
+        return userIdList;
+    }
+   }
